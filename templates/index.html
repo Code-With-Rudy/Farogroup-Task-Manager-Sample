@@ -274,11 +274,10 @@
     <!-- FIREBASE LOGIC -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-        import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
         import { getFirestore, collection, addDoc, query, onSnapshot, orderBy, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
-        // !!! IMPORTANT: REPLACE THIS WITH YOUR OWN FIREBASE CONFIG !!!
-        // If running on Vercel, you can use environment variables or paste the config object here.
+        // 1. CONFIGURATION
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
             apiKey: "AIzaSyAp84F3R-I_iVvb_zxDSvXieZ9O39cE22o",
             authDomain: "employeemanagement-5627b.firebaseapp.com",
@@ -292,12 +291,19 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
+        
         let currentUser = null;
         let chartInstance = null;
+        let unsubscribeTasks = null;
 
-        // --- AUTHENTICATION ---
+        // 2. AUTHENTICATION
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try { await signInWithCustomToken(auth, __initial_auth_token); } catch (err) { console.error("Token auth failed", err); }
+            }
+        };
+        initAuth();
+
         window.handleLogin = async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button[type="submit"]');
@@ -321,17 +327,27 @@
             } else {
                 document.getElementById('login-view').classList.remove('hidden');
                 document.getElementById('dashboard-view').classList.add('hidden');
+                if (unsubscribeTasks) unsubscribeTasks();
             }
         });
 
-        // --- DASHBOARD ---
+        // 3. DASHBOARD LOGIC
         function initDashboard() {
-            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), orderBy('createdAt', 'desc'));
-            onSnapshot(q, (snapshot) => {
+            if (!currentUser) return;
+
+            // SIMPLIFIED PATH: Just 'tasks'
+            const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
+            
+            unsubscribeTasks = onSnapshot(q, (snapshot) => {
                 const tasks = [];
                 snapshot.forEach(doc => tasks.push({ id: doc.id, ...doc.data() }));
                 renderTable(tasks);
                 updateStats(tasks);
+            }, (error) => {
+                console.error("Firestore Error:", error);
+                if (error.code === 'permission-denied') {
+                    alert("Error: Permission Denied. \n\nPlease go to Firebase Console > Firestore > Rules and switch to Test Mode (allow read, write: if true;)");
+                }
             });
         }
 
@@ -393,22 +409,40 @@
 
         window.addTask = async (e) => {
             e.preventDefault();
+            const btn = e.target.querySelector('button[type="submit"]');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<div class="loader"></div>'; // Show Spinner
+
             const title = document.getElementById('task-title').value;
             const assignee = document.getElementById('task-assignee').value;
             const priority = document.getElementById('task-priority').value;
             const status = document.getElementById('task-status').value;
             
-            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tasks'), {
-                title, assignee, priority, status, createdAt: new Date().toISOString()
-            });
-            e.target.reset();
-            hideTasksModal();
+            try {
+                // SIMPLIFIED PATH: Just 'tasks'
+                await addDoc(collection(db, 'tasks'), {
+                    title, assignee, priority, status, createdAt: new Date().toISOString()
+                });
+                e.target.reset();
+                hideTasksModal();
+            } catch (error) {
+                console.error("Add Task Failed:", error);
+                alert("Failed to add task: " + error.message + "\n\nCheck your Firebase Permissions.");
+            } finally {
+                btn.innerHTML = originalText; // Restore button
+            }
         };
 
         window.deleteTask = async (id) => {
-            if(confirm("Delete task?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id));
+            if(confirm("Delete task?")) {
+                try {
+                    await deleteDoc(doc(db, 'tasks', id));
+                } catch(e) {
+                    console.error("Delete Failed:", e);
+                    alert("Delete failed: " + e.message);
+                }
+            }
         };
     </script>
 </body>
-
 </html>
